@@ -130,6 +130,13 @@ bool GLRenderer::init() {
     }
     const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
     std::cout << "[GLES] Version: " << (version ? version : "unknown") << '\n';
+    auto printGPU = [](const char* label, GLenum name) {
+        const char* value = reinterpret_cast<const char*>(glGetString(name));
+        std::cout << label << (value ? value : "unknown") << '\n';
+    };
+    printGPU("[GPU] Vendor: ", GL_VENDOR);
+    printGPU("[GPU] Renderer: ", GL_RENDERER);
+    printGPU("[GPU] GLSL: ", GL_SHADING_LANGUAGE_VERSION);
     if (!version || !createProgram()) return false;
     glGenBuffers(1, &vertexBuffer_);
     glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer_);
@@ -210,6 +217,14 @@ void GLRenderer::setStressCount(int count) {
     stressCount_ = std::clamp(count, 0, 5000);
 }
 
+void GLRenderer::setPlayer(float x, float z, float dirX, float dirZ) {
+    playerX_ = x; playerZ_ = z; playerDirX_ = dirX; playerDirZ_ = dirZ;
+}
+
+void GLRenderer::setTornado(float x, float z, float intensity) {
+    tornadoX_ = x; tornadoZ_ = z; tornadoIntensity_ = intensity;
+}
+
 void GLRenderer::render(float elapsedSeconds) {
     glClearColor(0.04f, 0.07f, 0.13f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -217,11 +232,12 @@ void GLRenderer::render(float elapsedSeconds) {
     const Mat4 projection = perspective(aspect);
     const float cx = map_.empty() ? 0.0f : static_cast<float>(map_[0].size()) * 0.5f;
     const float cz = static_cast<float>(map_.size()) * 0.5f;
-    const float radius = std::max(9.0f, std::max(cx,cz)*2.3f);
-    const Mat4 view = lookAt(cx + std::sin(elapsedSeconds*0.12f)*radius,
-                             radius*0.8f,
-                             cz + std::cos(elapsedSeconds*0.12f)*radius,
-                             cx, 0.0f, cz);
+    // Third-person chase camera: follow the player and keep the tornado visible ahead.
+    const float eyeX = playerX_ - playerDirX_ * 5.5f;
+    const float eyeZ = playerZ_ - playerDirZ_ * 5.5f;
+    const Mat4 view = lookAt(eyeX, 4.3f, eyeZ,
+                             playerX_ + playerDirX_ * 5.0f, 1.1f,
+                             playerZ_ + playerDirZ_ * 5.0f);
     const Mat4 vp = multiply(projection,view);
     glUseProgram(program_);
     
@@ -251,6 +267,30 @@ void GLRenderer::render(float elapsedSeconds) {
                     drawBox(static_cast<float>(x)+0.5f,0.9f,
                             static_cast<float>(z)+0.5f,0.5f,0.9f,0.5f);
     }
+    // Visible player: body, head, and a forward-facing marker.
+    drawBox(playerX_, 0.72f, playerZ_, 0.28f, 0.62f, 0.28f);
+    drawBox(playerX_, 1.55f, playerZ_, 0.22f, 0.22f, 0.22f);
+    drawBox(playerX_ + playerDirX_ * 0.38f, 1.05f,
+            playerZ_ + playerDirZ_ * 0.38f, 0.12f, 0.12f, 0.12f);
+
+    // Animated funnel made from GLES2 cube geometry: no new shaders or dependencies.
+    // Wider at the top, narrow at the bottom, rotating debris around the funnel.
+    constexpr int rings = 13;
+    constexpr int particles = 12;
+    for (int ring = 0; ring < rings; ++ring) {
+        const float h = 0.45f + ring * 0.75f;
+        const float radius = (0.25f + ring * 0.20f) * tornadoIntensity_;
+        for (int part = 0; part < particles; ++part) {
+            const float angle = elapsedSeconds * (2.0f + 0.10f * ring) +
+                                part * (6.2831853f / particles) + ring * 0.55f;
+            const float wobble = 0.16f * std::sin(elapsedSeconds * 1.4f + ring);
+            const float px = tornadoX_ + wobble + std::cos(angle) * radius;
+            const float pz = tornadoZ_ + std::sin(angle) * radius;
+            const float scale = 0.14f + ring * 0.018f;
+            drawBox(px, h, pz, scale, 0.26f, scale);
+        }
+    }
+
     // Benchmark geometry: deliberately separate draw calls to measure CPU
     // submission + GPU work. Deterministic grid; no random allocations.
     if (stressCount_ > 0) {

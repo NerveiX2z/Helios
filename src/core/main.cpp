@@ -1,6 +1,7 @@
 #include <SDL2/SDL.h>
 #include <cstdio>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -81,7 +82,26 @@ int main(int argc, char** argv) {
     const Uint64 stressStart = SDL_GetTicks64();
     int stressStage = -1;
     const int stressCounts[] = {0, 100, 500, 1000, 5000};
-    Player player(1.5, 1.5);
+    // Spawn on a traversable tile, never inside the 64x64 town buildings.
+    Player player(2.5, 2.5);
+    if (map.size() > 3 && map[2].size() > 3 && map[2][2] != 0) {
+        bool found = false;
+        for (size_t z = 1; z + 1 < map.size() && !found; ++z)
+            for (size_t x = 1; x + 1 < map[z].size(); ++x)
+                if (map[z][x] == 0) {
+                    player.x = static_cast<double>(x) + 0.5;
+                    player.y = static_cast<double>(z) + 0.5;
+                    found = true; break;
+                }
+    }
+    // Player faces east initially, so the town is in front of the camera.
+    player.dirX = 1.0; player.dirY = 0.0;
+    player.planeX = 0.0; player.planeY = -0.66;
+    constexpr double fixedStep = 1.0 / 60.0;
+    double accumulator = 0.0;
+    double simulationTime = 0.0;
+    double tornadoX = 43.0, tornadoZ = 43.0;
+    std::cout << "[CONTROLS] W/S move | A/D turn | Q/E strafe | Shift sprint | ESC quit\n";
     bool running = true;
     Uint64 frames = 0;
     Uint64 statsStart = SDL_GetTicks64();
@@ -105,13 +125,27 @@ int main(int argc, char** argv) {
         last = now;
         if (dt > 0.1) dt = 0.1;
         elapsed += dt;
+        accumulator += dt;
+        // All gameplay updates occur on the main thread at fixed 60 Hz.
+        int steps = 0;
+        while (accumulator >= fixedStep && steps < 6) {
+            player.update(map, fixedStep);
+            simulationTime += fixedStep;
+            // Slowly drifting storm: deterministic function of simulation time.
+            tornadoX = 43.0 + 8.0 * std::sin(simulationTime * 0.045);
+            tornadoZ = 43.0 + 7.0 * std::cos(simulationTime * 0.037);
+            accumulator -= fixedStep;
+            ++steps;
+        }
         if (legacy) {
-            player.update(map, dt);
             cpu->renderRaycaster(player.x, player.y, player.dirX, player.dirY,
                                  player.planeX, player.planeY, map);
             if (!cpu->present()) break;
         } else {
-            gl->render(static_cast<float>(elapsed));
+            gl->setPlayer(static_cast<float>(player.x), static_cast<float>(player.y),
+                          static_cast<float>(player.dirX), static_cast<float>(player.dirY));
+            gl->setTornado(static_cast<float>(tornadoX), static_cast<float>(tornadoZ), 1.0f);
+            gl->render(static_cast<float>(simulationTime));
         }
         ++frames;
         const Uint64 ticks = SDL_GetTicks64();

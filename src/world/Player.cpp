@@ -1,4 +1,4 @@
-#include "../include/Player.h"
+#include "Player.h"
 
 #include <SDL2/SDL.h>
 #include <algorithm>
@@ -44,7 +44,10 @@ void Player::update(const std::vector<std::vector<int>>& map, double deltaTime) 
     const Uint8* state = SDL_GetKeyboardState(nullptr);
     const bool forward = state[SDL_SCANCODE_W] || state[SDL_SCANCODE_UP];
     const bool backward = state[SDL_SCANCODE_S] || state[SDL_SCANCODE_DOWN];
-    const double moveAmount = speed * deltaTime;
+    const bool left = state[SDL_SCANCODE_Q];
+    const bool right = state[SDL_SCANCODE_E];
+    const double sprint = (state[SDL_SCANCODE_LSHIFT] || state[SDL_SCANCODE_RSHIFT]) ? 1.8 : 1.0;
+    const double moveAmount = speed * sprint * deltaTime;
 
     auto move = [&](double amount) {
         const double nextX = x + dirX * amount;
@@ -61,6 +64,15 @@ void Player::update(const std::vector<std::vector<int>>& map, double deltaTime) 
 
     if (forward) move(moveAmount);
     if (backward) move(-moveAmount);
+    // Q/E strafe while A/D rotate (legacy controls preserved).
+    auto strafe = [&](double amount) {
+        const double nextX = x - dirY * amount;
+        const double nextY = y + dirX * amount;
+        if (!isWall(map, static_cast<int>(nextX), static_cast<int>(y))) x = nextX;
+        if (!isWall(map, static_cast<int>(x), static_cast<int>(nextY))) y = nextY;
+    };
+    if (left) strafe(-moveAmount);
+    if (right) strafe(moveAmount);
 
     if (state[SDL_SCANCODE_D] || state[SDL_SCANCODE_RIGHT]) {
         const double angle = -rotSpeed * deltaTime;
